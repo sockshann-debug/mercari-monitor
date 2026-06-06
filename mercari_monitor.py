@@ -16,6 +16,7 @@ TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 
 KEYWORDS = [
     {"keyword": "TWICE ミナ", "min_price": 0, "max_price": 5000},
+    {"keyword": "TWICE", "min_price": 0, "max_price": 5000}
     # {"keyword": "ニンテンドースイッチ", "min_price": 0, "max_price": 0},
 ]
 
