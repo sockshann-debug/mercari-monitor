@@ -15,7 +15,7 @@ TELEGRAM_TOKEN   = os.environ.get("TELEGRAM_TOKEN", "")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 
 KEYWORDS = [
-    {"keyword": "Nintendo Switch", "min_price": 0, "max_price": 20000},
+    {"keyword": "TWICE ミナ", "min_price": 0, "max_price": 5000},
     # {"keyword": "ニンテンドースイッチ", "min_price": 0, "max_price": 0},
 ]
 
