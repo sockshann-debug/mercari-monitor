@@ -15,8 +15,8 @@ from datetime import datetime
 
 # ─── 設定區 ──────────────────────────────────────────────────────────────────
 
-TELEGRAM_TOKEN   = os.environ.get("TELEGRAM_TOKEN", "8810237264:AAFuBThyMkPV8Hu4ExVO4uJ_zJm2Hrm63ZA")    # Bot Token
-TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "5761098907")  # 你的 Chat ID
+TELEGRAM_TOKEN   = os.environ.get("TELEGRAM_TOKEN", "A")    # Bot Token
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")  # 你的 Chat ID
 
 # 監測關鍵字清單，每個項目可設定 min_price / max_price（0 = 不限）
 KEYWORDS = [
