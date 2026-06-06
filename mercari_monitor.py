@@ -1,33 +1,27 @@
 """
-Mercari 商品監測機器人 - Telegram 通知版
-使用方式：
-  1. 設定 .env 或環境變數 TELEGRAM_TOKEN 和 TELEGRAM_CHAT_ID
-  2. 在 config.py 或下方 KEYWORDS 設定監測關鍵字
-  3. python mercari_monitor.py
+Mercari 日本 商品監測機器人 - Telegram 通知版
+改用網頁抓取，避免 API 被擋
 """
 
 import os
 import time
-import json
 import logging
 import requests
-from datetime import datetime
+from bs4 import BeautifulSoup
 
 # ─── 設定區 ──────────────────────────────────────────────────────────────────
 
-TELEGRAM_TOKEN   = os.environ.get("TELEGRAM_TOKEN", "")    # Bot Token
-TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")  # 你的 Chat ID
+TELEGRAM_TOKEN   = os.environ.get("TELEGRAM_TOKEN", "")
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 
-# 監測關鍵字清單，每個項目可設定 min_price / max_price（0 = 不限）
 KEYWORDS = [
-    {"keyword": "TWICE ミナ", "min_price": 0, "max_price": 5000},
-    # {"keyword": "iPhone 15",       "min_price": 0, "max_price": 0},
+    {"keyword": "Nintendo Switch", "min_price": 0, "max_price": 20000},
+    # {"keyword": "ニンテンドースイッチ", "min_price": 0, "max_price": 0},
 ]
 
-CHECK_INTERVAL = 60   # 每幾秒檢查一次（建議 60 秒以上）
-MAX_ITEMS      = 30   # 每次最多抓幾筆
+CHECK_INTERVAL = 120  # 每幾秒查詢一次（建議 120 秒以上）
 
-# ─── 日誌設定 ─────────────────────────────────────────────────────────────────
+# ─── 日誌 ─────────────────────────────────────────────────────────────────────
 
 logging.basicConfig(
     level=logging.INFO,
@@ -36,74 +30,64 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
-# ─── Mercari API ──────────────────────────────────────────────────────────────
+# ─── 抓取 Mercari ─────────────────────────────────────────────────────────────
 
-MERCARI_API = "https://api.mercari.jp/v2/entities:search"
 HEADERS = {
-    "Content-Type": "application/json",
-    "X-Platform": "web",
-    "User-Agent": "Mozilla/5.0 (compatible; MercariMonitor/1.0)",
+    "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1",
+    "Accept-Language": "ja-JP,ja;q=0.9",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
 }
 
-def build_payload(keyword: str, min_price: int = 0, max_price: int = 0) -> dict:
-    return {
-        "userId": "",
-        "pageSize": MAX_ITEMS,
-        "pageToken": "",
-        "searchSessionId": f"monitor_{int(time.time())}",
-        "indexRouting": "INDEX_ROUTING_UNSPECIFIED",
-        "thumbnailTypes": [],
-        "searchCondition": {
-            "keyword": keyword,
-            "excludeKeyword": "",
-            "sort": "SORT_CREATED_TIME",
-            "order": "ORDER_DESC",
-            "status": ["STATUS_ON_SALE"],
-            "categoryId": [],
-            "brandId": [],
-            "sellerId": [],
-            "priceMin": min_price,
-            "priceMax": max_price,
-            "itemConditionId": [],
-            "shippingPayerId": [],
-            "shippingFromArea": [],
-            "shippingMethod": [],
-            "colorId": [],
-            "hasCoupon": False,
-            "attributes": [],
-            "itemTypes": [],
-            "skuIds": [],
-        },
-        "defaultDatasets": ["DATASET_TYPE_MERCARI", "DATASET_TYPE_BEYOND"],
-        "serviceFrom": "suruga",
-        "withItemBrand": True,
-        "withItemSize": False,
-        "withItemPromotions": False,
-        "withItemSizes": False,
-        "trackingId": "",
+def build_url(keyword: str, min_price: int = 0, max_price: int = 0) -> str:
+    import urllib.parse
+    params = {
+        "keyword": keyword,
+        "status": "on_sale",
+        "sort": "created_time",
+        "order": "desc",
     }
+    if min_price > 0:
+        params["price_min"] = min_price
+    if max_price > 0:
+        params["price_max"] = max_price
+    return "https://jp.mercari.com/search?" + urllib.parse.urlencode(params)
 
 def fetch_items(keyword: str, min_price: int = 0, max_price: int = 0) -> list[dict]:
+    url = build_url(keyword, min_price, max_price)
     try:
-        resp = requests.post(
-            MERCARI_API,
-            headers=HEADERS,
-            json=build_payload(keyword, min_price, max_price),
-            timeout=15,
-        )
+        resp = requests.get(url, headers=HEADERS, timeout=20)
         resp.raise_for_status()
-        data = resp.json()
-        items = data.get("items", [])
-        return [
-            {
-                "id":    item.get("id", ""),
-                "name":  item.get("name", "(無標題)"),
-                "price": item.get("price", 0),
-                "image": (item.get("thumbnails") or [""])[0],
-                "url":   f"https://jp.mercari.com/item/{item.get('id', '')}",
-            }
-            for item in items
-        ]
+        soup = BeautifulSoup(resp.text, "html.parser")
+
+        items = []
+        # Mercari 商品卡片
+        for card in soup.select("li[data-testid='item-cell']")[:30]:
+            try:
+                a = card.find("a", href=True)
+                item_id = a["href"].split("/")[-1] if a else ""
+                name_el = card.select_one("[class*='itemName'], [class*='item-name'], p")
+                price_el = card.select_one("[class*='price'], [class*='Price']")
+                img_el = card.select_one("img")
+
+                name = name_el.get_text(strip=True) if name_el else "(無標題)"
+                price_text = price_el.get_text(strip=True) if price_el else "0"
+                price = int("".join(filter(str.isdigit, price_text))) if price_text else 0
+                image = img_el.get("src", "") if img_el else ""
+
+                if item_id:
+                    items.append({
+                        "id": item_id,
+                        "name": name,
+                        "price": price,
+                        "image": image,
+                        "url": f"https://jp.mercari.com/item/{item_id}",
+                    })
+            except Exception:
+                continue
+
+        log.info(f"  [{keyword}] 抓到 {len(items)} 件商品")
+        return items
+
     except Exception as e:
         log.error(f"抓取失敗（{keyword}）：{e}")
         return []
@@ -112,10 +96,10 @@ def fetch_items(keyword: str, min_price: int = 0, max_price: int = 0) -> list[di
 
 def send_telegram(text: str, photo_url: str = "") -> bool:
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
-        log.warning("尚未設定 TELEGRAM_TOKEN 或 TELEGRAM_CHAT_ID，跳過通知")
+        log.warning("尚未設定 TELEGRAM_TOKEN 或 TELEGRAM_CHAT_ID")
         return False
     try:
-        if photo_url:
+        if photo_url and photo_url.startswith("http"):
             api = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto"
             payload = {
                 "chat_id": TELEGRAM_CHAT_ID,
@@ -129,7 +113,6 @@ def send_telegram(text: str, photo_url: str = "") -> bool:
                 "chat_id": TELEGRAM_CHAT_ID,
                 "text": text,
                 "parse_mode": "HTML",
-                "disable_web_page_preview": False,
             }
         r = requests.post(api, json=payload, timeout=10)
         r.raise_for_status()
@@ -139,9 +122,9 @@ def send_telegram(text: str, photo_url: str = "") -> bool:
         return False
 
 def notify_new_items(keyword: str, new_items: list[dict]) -> None:
-    log.info(f"🔔 [{keyword}] 發現 {len(new_items)} 件新商品，發送通知")
-    for item in new_items[:5]:   # 每批最多通知 5 件，避免洗版
-        price_str = f"¥{item['price']:,}"
+    log.info(f"🔔 [{keyword}] 發現 {len(new_items)} 件新商品")
+    for item in new_items[:5]:
+        price_str = f"¥{item['price']:,}" if item['price'] else "價格不明"
         text = (
             f"🛍 <b>Mercari 新商品</b>\n"
             f"🔍 關鍵字：<code>{keyword}</code>\n\n"
@@ -150,31 +133,25 @@ def notify_new_items(keyword: str, new_items: list[dict]) -> None:
             f"🔗 <a href=\"{item['url']}\">點此查看商品</a>"
         )
         send_telegram(text, photo_url=item.get("image", ""))
-        time.sleep(0.5)   # 避免打太快
+        time.sleep(0.5)
 
     if len(new_items) > 5:
-        send_telegram(
-            f"⚡ <b>[{keyword}]</b> 還有 {len(new_items) - 5} 件新商品，請至 Mercari 查看！"
-        )
+        send_telegram(f"⚡ <b>[{keyword}]</b> 還有 {len(new_items) - 5} 件新商品！")
 
 # ─── 主迴圈 ───────────────────────────────────────────────────────────────────
 
 def main() -> None:
     log.info("=== Mercari Monitor 啟動 ===")
-    if not TELEGRAM_TOKEN:
-        log.warning("⚠ 未設定 TELEGRAM_TOKEN，將不發送通知（僅印出日誌）")
 
-    # 記錄已見過的商品 ID
     seen: dict[str, set] = {kw["keyword"]: set() for kw in KEYWORDS}
 
-    # 第一輪：先暖身，把現有商品記起來，不發通知
     log.info("初始化：讀取現有商品（不發通知）…")
     for cfg in KEYWORDS:
         kw = cfg["keyword"]
         items = fetch_items(kw, cfg.get("min_price", 0), cfg.get("max_price", 0))
         seen[kw] = {item["id"] for item in items}
         log.info(f"  [{kw}] 已記錄 {len(seen[kw])} 件現有商品")
-        time.sleep(2)
+        time.sleep(3)
 
     log.info(f"開始監測，每 {CHECK_INTERVAL} 秒查詢一次")
     send_telegram("✅ <b>Mercari Monitor 已啟動</b>\n正在監測：\n" +
@@ -183,18 +160,15 @@ def main() -> None:
     while True:
         time.sleep(CHECK_INTERVAL)
         for cfg in KEYWORDS:
-            kw       = cfg["keyword"]
-            min_p    = cfg.get("min_price", 0)
-            max_p    = cfg.get("max_price", 0)
-            log.info(f"查詢中：{kw}")
-            items    = fetch_items(kw, min_p, max_p)
+            kw    = cfg["keyword"]
+            items = fetch_items(kw, cfg.get("min_price", 0), cfg.get("max_price", 0))
             new_items = [i for i in items if i["id"] not in seen[kw]]
             if new_items:
                 notify_new_items(kw, new_items)
                 seen[kw].update(i["id"] for i in new_items)
             else:
                 log.info(f"  [{kw}] 無新商品")
-            time.sleep(2)   # 各關鍵字間隔 2 秒
+            time.sleep(3)
 
 if __name__ == "__main__":
     main()
